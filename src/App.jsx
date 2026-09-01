@@ -1,14 +1,12 @@
 import { useEffect, useState } from "react";
 import {
   Activity,
-  ArrowUpRight,
   Bot,
   Building2,
   CheckCircle2,
   DollarSign,
   Flame,
   Loader2,
-  MessageSquare,
   Plus,
   Search,
   Send,
@@ -37,9 +35,34 @@ function App() {
     budget: "",
   });
 
-  // =========================
+  // =====================================================
+  // CLEAN TEXT
+  // =====================================================
+
+  const cleanText = (value) => {
+    return String(value || "")
+      .replace(/\*\*/g, "")
+      .replace(/`/g, "")
+      .trim();
+  };
+
+  // =====================================================
+  // PARSE MONEY
+  // Handles ₹120,000 / $120,000 / 120000 rupees
+  // =====================================================
+
+  const parseMoney = (value) => {
+    const cleaned = String(value || "")
+      .replace(/[^0-9.-]/g, "");
+
+    const number = Number(cleaned);
+
+    return Number.isFinite(number) ? number : 0;
+  };
+
+  // =====================================================
   // LOAD LEADS
-  // =========================
+  // =====================================================
 
   const loadLeads = async () => {
     setLoadingLeads(true);
@@ -59,57 +82,69 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || "Failed to load leads");
+        throw new Error(
+          data.detail || "Failed to load leads"
+        );
       }
 
       const result = data.result || "";
-
-      // The backend returns a natural-language table.
-      // We also refresh the dashboard through a second endpoint
-      // when available. For now, parse the common markdown table.
       const lines = result.split("\n");
 
       const parsed = [];
 
       for (const line of lines) {
         if (
-          line.includes("|") &&
-          !line.includes("Lead ID") &&
-          !line.includes("---")
+          !line.includes("|") ||
+          line.includes("Lead ID") ||
+          line.includes("---")
         ) {
-          const parts = line
-            .split("|")
-            .map((part) => part.trim())
-            .filter(Boolean);
+          continue;
+        }
 
-          if (parts.length >= 8 && !isNaN(Number(parts[0]))) {
-            parsed.push({
-              id: Number(parts[0]),
-              name: parts[1],
-              company: parts[2],
-              email: parts[3],
-              requirement: parts[4],
-              budget: Number(
-                parts[5].replace(/[₹,\s]/g, "")
-              ),
-              status: parts[6].toLowerCase(),
-              lead_score:
-                parts[7] === "—"
-                  ? null
-                  : Number(
-                      parts[7].replace(
-                        /[^0-9]/g,
-                        ""
-                      )
-                    ),
-            });
-          }
+        const parts = line
+          .split("|")
+          .map((part) => cleanText(part))
+          .filter(Boolean);
+
+        if (
+          parts.length >= 8 &&
+          !isNaN(Number(parts[0]))
+        ) {
+          const scoreText = cleanText(parts[7]);
+
+          parsed.push({
+            id: Number(parts[0]),
+            name: cleanText(parts[1]),
+            company: cleanText(parts[2]),
+            email: cleanText(parts[3]),
+            requirement: cleanText(parts[4]),
+
+            budget: parseMoney(parts[5]),
+
+            status: cleanText(parts[6])
+              .toLowerCase(),
+
+            lead_score:
+              scoreText === "—" ||
+              scoreText === "-" ||
+              scoreText === ""
+                ? null
+                : Number(
+                    scoreText.replace(
+                      /[^0-9]/g,
+                      ""
+                    )
+                  ),
+          });
         }
       }
 
       setLeads(parsed);
     } catch (err) {
-      setError(err.message);
+      console.error(err);
+      setError(
+        err.message || "Could not load leads"
+      );
     } finally {
       setLoadingLeads(false);
     }
@@ -119,12 +154,12 @@ function App() {
     loadLeads();
   }, []);
 
-  // =========================
+  // =====================================================
   // RUN AI AGENT
-  // =========================
+  // =====================================================
 
   const runAgent = async () => {
-    if (!goal.trim()) return;
+    if (!goal.trim() || loading) return;
 
     setLoading(true);
     setAnswer("");
@@ -155,42 +190,48 @@ function App() {
 
       await loadLeads();
     } catch (err) {
-      setError(err.message);
+      console.error(err);
+      setError(
+        err.message || "Agent request failed"
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  // =========================
+  // =====================================================
   // CREATE LEAD
-  // =========================
+  // =====================================================
 
   const createLead = async (event) => {
     event.preventDefault();
 
     if (
-      !newLead.name ||
-      !newLead.email ||
-      !newLead.company ||
-      !newLead.requirement ||
+      !newLead.name.trim() ||
+      !newLead.email.trim() ||
+      !newLead.company.trim() ||
+      !newLead.requirement.trim() ||
       !newLead.budget
     ) {
+      setError("Please fill all lead fields.");
       return;
     }
 
     setLoading(true);
     setError("");
+    setAnswer("");
 
     const prompt = `
-Create a new lead with these details:
+Create a new lead with these details.
 
 Name: ${newLead.name}
 Email: ${newLead.email}
 Company: ${newLead.company}
 Requirement: ${newLead.requirement}
-Budget: ${newLead.budget} rupees.
+Budget: ₹${newLead.budget}
 
 Create the lead and confirm the details.
+Use Indian Rupees (₹), not dollars.
 `;
 
     try {
@@ -216,7 +257,8 @@ Create the lead and confirm the details.
       }
 
       setAnswer(
-        data.result || "Lead created successfully."
+        data.result ||
+          "Lead created successfully."
       );
 
       setNewLead({
@@ -231,15 +273,18 @@ Create the lead and confirm the details.
 
       await loadLeads();
     } catch (err) {
-      setError(err.message);
+      console.error(err);
+      setError(
+        err.message || "Could not create lead"
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  // =========================
+  // =====================================================
   // KEYBOARD
-  // =========================
+  // =====================================================
 
   const handleKeyDown = (event) => {
     if (
@@ -251,9 +296,9 @@ Create the lead and confirm the details.
     }
   };
 
-  // =========================
+  // =====================================================
   // METRICS
-  // =========================
+  // =====================================================
 
   const totalLeads = leads.length;
 
@@ -275,9 +320,9 @@ Create the lead and confirm the details.
     0
   );
 
-  // =========================
+  // =====================================================
   // CURRENCY
-  // =========================
+  // =====================================================
 
   const formatCurrency = (value) => {
     return new Intl.NumberFormat("en-IN", {
@@ -287,16 +332,33 @@ Create the lead and confirm the details.
     }).format(value || 0);
   };
 
-  // =========================
+  // =====================================================
   // STATUS CLASS
-  // =========================
+  // =====================================================
 
   const getStatusClass = (status) => {
-    if (status === "hot") return "status-hot";
-    if (status === "warm") return "status-warm";
-    if (status === "cold") return "status-cold";
+    const cleanStatus = String(status || "")
+      .toLowerCase()
+      .trim();
+
+    if (cleanStatus === "hot") {
+      return "status-hot";
+    }
+
+    if (cleanStatus === "warm") {
+      return "status-warm";
+    }
+
+    if (cleanStatus === "cold") {
+      return "status-cold";
+    }
+
     return "status-new";
   };
+
+  // =====================================================
+  // UI
+  // =====================================================
 
   return (
     <div className="app">
@@ -308,6 +370,7 @@ Create the lead and confirm the details.
       <aside className="sidebar">
 
         <div className="brand">
+
           <div className="brand-logo">
             <Sparkles size={20} />
           </div>
@@ -316,6 +379,7 @@ Create the lead and confirm the details.
             <strong>SalesPilot</strong>
             <span>AI CRM</span>
           </div>
+
         </div>
 
         <nav className="nav">
@@ -349,12 +413,14 @@ Create the lead and confirm the details.
         <div className="sidebar-bottom">
 
           <div className="online-card">
+
             <span className="online-dot" />
 
             <div>
               <strong>Agent Online</strong>
               <span>Groq powered</span>
             </div>
+
           </div>
 
         </div>
@@ -372,11 +438,13 @@ Create the lead and confirm the details.
         <header className="topbar">
 
           <div>
+
             <span className="breadcrumb">
               Workspace / Dashboard
             </span>
 
             <h1>Business Overview</h1>
+
           </div>
 
           <button
@@ -391,12 +459,11 @@ Create the lead and confirm the details.
 
         </header>
 
-        {/* =========================
-            ERROR
-        ========================= */}
+        {/* ERROR */}
 
         {error && (
           <div className="error-banner">
+
             <span>{error}</span>
 
             <button
@@ -404,6 +471,7 @@ Create the lead and confirm the details.
             >
               <X size={16} />
             </button>
+
           </div>
         )}
 
@@ -419,6 +487,7 @@ Create the lead and confirm the details.
           <div className="stat-card">
 
             <div className="stat-top">
+
               <div className="stat-icon">
                 <Users size={19} />
               </div>
@@ -426,6 +495,7 @@ Create the lead and confirm the details.
               <span className="stat-label">
                 TOTAL LEADS
               </span>
+
             </div>
 
             <strong className="stat-value">
@@ -441,6 +511,7 @@ Create the lead and confirm the details.
           <div className="stat-card">
 
             <div className="stat-top">
+
               <div className="stat-icon hot-icon">
                 <Flame size={19} />
               </div>
@@ -448,6 +519,7 @@ Create the lead and confirm the details.
               <span className="stat-label">
                 HOT LEADS
               </span>
+
             </div>
 
             <strong className="stat-value">
@@ -463,6 +535,7 @@ Create the lead and confirm the details.
           <div className="stat-card">
 
             <div className="stat-top">
+
               <div className="stat-icon">
                 <Target size={19} />
               </div>
@@ -470,6 +543,7 @@ Create the lead and confirm the details.
               <span className="stat-label">
                 WARM LEADS
               </span>
+
             </div>
 
             <strong className="stat-value">
@@ -485,6 +559,7 @@ Create the lead and confirm the details.
           <div className="stat-card">
 
             <div className="stat-top">
+
               <div className="stat-icon">
                 <DollarSign size={19} />
               </div>
@@ -492,6 +567,7 @@ Create the lead and confirm the details.
               <span className="stat-label">
                 PIPELINE VALUE
               </span>
+
             </div>
 
             <strong className="stat-value">
@@ -520,6 +596,7 @@ Create the lead and confirm the details.
           <div className="section-heading">
 
             <div>
+
               <span className="section-eyebrow">
                 <Sparkles size={14} />
                 AI POWERED
@@ -532,6 +609,7 @@ Create the lead and confirm the details.
                 create prospects or calculate
                 deals.
               </p>
+
             </div>
 
             <div className="agent-badge">
@@ -580,33 +658,33 @@ Create the lead and confirm the details.
           <div className="quick-actions">
 
             <button
-              onClick={() => {
+              onClick={() =>
                 setGoal(
                   "Show me all existing leads and identify which leads need the most attention."
-                );
-              }}
+                )
+              }
             >
               <Search size={15} />
               Analyze leads
             </button>
 
             <button
-              onClick={() => {
+              onClick={() =>
                 setGoal(
                   "Show me all hot leads."
-                );
-              }}
+                )
+              }
             >
               <Flame size={15} />
               Find hot leads
             </button>
 
             <button
-              onClick={() => {
+              onClick={() =>
                 setGoal(
                   "Calculate a deal for ₹100000 with a 10% discount."
-                );
-              }}
+                )
+              }
             >
               <DollarSign size={15} />
               Calculate deal
@@ -620,6 +698,7 @@ Create the lead and confirm the details.
               <div className="answer-header">
 
                 <div className="answer-agent">
+
                   <div className="answer-avatar">
                     <Sparkles size={15} />
                   </div>
@@ -633,11 +712,10 @@ Create the lead and confirm the details.
                       Completed
                     </span>
                   </div>
+
                 </div>
 
-                <CheckCircle2
-                  size={18}
-                />
+                <CheckCircle2 size={18} />
 
               </div>
 
@@ -662,6 +740,7 @@ Create the lead and confirm the details.
           <div className="section-heading leads-heading">
 
             <div>
+
               <span className="section-eyebrow">
                 <Users size={14} />
                 CRM
@@ -673,6 +752,7 @@ Create the lead and confirm the details.
                 Manage and prioritize your
                 sales opportunities.
               </p>
+
             </div>
 
             <button
@@ -695,17 +775,24 @@ Create the lead and confirm the details.
           <div className="leads-card">
 
             {loadingLeads ? (
+
               <div className="empty-state">
+
                 <Loader2
                   size={25}
                   className="spin"
                 />
+
                 <span>
                   Loading CRM data...
                 </span>
+
               </div>
+
             ) : leads.length === 0 ? (
+
               <div className="empty-state">
+
                 <Building2 size={30} />
 
                 <strong>
@@ -716,13 +803,17 @@ Create the lead and confirm the details.
                   Add your first lead to get
                   started.
                 </span>
+
               </div>
+
             ) : (
+
               <div className="table-wrapper">
 
                 <table>
 
                   <thead>
+
                     <tr>
                       <th>LEAD</th>
                       <th>COMPANY</th>
@@ -731,6 +822,7 @@ Create the lead and confirm the details.
                       <th>STATUS</th>
                       <th>SCORE</th>
                     </tr>
+
                   </thead>
 
                   <tbody>
@@ -740,6 +832,7 @@ Create the lead and confirm the details.
                       <tr key={lead.id}>
 
                         <td>
+
                           <div className="lead-person">
 
                             <div className="lead-avatar">
@@ -749,6 +842,7 @@ Create the lead and confirm the details.
                             </div>
 
                             <div>
+
                               <strong>
                                 {lead.name}
                               </strong>
@@ -756,9 +850,11 @@ Create the lead and confirm the details.
                               <span>
                                 {lead.email}
                               </span>
+
                             </div>
 
                           </div>
+
                         </td>
 
                         <td>
@@ -770,14 +866,17 @@ Create the lead and confirm the details.
                         </td>
 
                         <td>
+
                           <strong>
                             {formatCurrency(
                               lead.budget
                             )}
                           </strong>
+
                         </td>
 
                         <td>
+
                           <span
                             className={`status ${getStatusClass(
                               lead.status
@@ -785,9 +884,11 @@ Create the lead and confirm the details.
                           >
                             {lead.status}
                           </span>
+
                         </td>
 
                         <td>
+
                           <div className="score">
 
                             <strong>
@@ -795,13 +896,17 @@ Create the lead and confirm the details.
                                 "—"}
                             </strong>
 
-                            {lead.lead_score && (
-                              <span>
-                                /100
-                              </span>
-                            )}
+                            {lead.lead_score !==
+                              null &&
+                              lead.lead_score !==
+                                undefined && (
+                                <span>
+                                  /100
+                                </span>
+                              )}
 
                           </div>
+
                         </td>
 
                       </tr>
@@ -813,17 +918,17 @@ Create the lead and confirm the details.
                 </table>
 
               </div>
+
             )}
 
           </div>
 
         </section>
 
-        {/* =========================
-            FOOTER
-        ========================= */}
+        {/* FOOTER */}
 
         <footer className="footer">
+
           <span>
             SalesPilot AI
           </span>
@@ -831,6 +936,7 @@ Create the lead and confirm the details.
           <span>
             Autonomous Sales Intelligence
           </span>
+
         </footer>
 
       </main>
@@ -858,12 +964,14 @@ Create the lead and confirm the details.
             <div className="modal-header">
 
               <div>
+
                 <span className="section-eyebrow">
                   <Plus size={14} />
                   CRM
                 </span>
 
                 <h2>Add New Lead</h2>
+
               </div>
 
               <button
@@ -881,6 +989,7 @@ Create the lead and confirm the details.
 
               <label>
                 Name
+
                 <input
                   value={newLead.name}
                   onChange={(event) =>
@@ -895,6 +1004,7 @@ Create the lead and confirm the details.
 
               <label>
                 Email
+
                 <input
                   type="email"
                   value={newLead.email}
@@ -911,6 +1021,7 @@ Create the lead and confirm the details.
 
               <label>
                 Company
+
                 <input
                   value={newLead.company}
                   onChange={(event) =>
@@ -926,6 +1037,7 @@ Create the lead and confirm the details.
 
               <label>
                 Requirement
+
                 <input
                   value={
                     newLead.requirement
@@ -943,6 +1055,7 @@ Create the lead and confirm the details.
 
               <label>
                 Budget
+
                 <input
                   type="number"
                   value={newLead.budget}
